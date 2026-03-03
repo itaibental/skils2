@@ -1,10 +1,10 @@
 /**
  * Skills Practice - Project Logic
- * גרסה מעודכנת עם חיבור לפרויקט Firebase: webpages-4aacb
+ * גרסה משופרת עם דיווח שגיאות מפורט לפתרון בעיות חיבור.
  */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
 // --- הגדרות Firebase מותאמות אישית ---
@@ -22,7 +22,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// מזהה האפליקציה עבור נתיבי Firestore (ניתן לשנות לצורך הפרדה בין פרויקטים שונים באותו DB)
 const appId = 'skills-practice-v2';
 
 // סטייט גלובלי
@@ -40,12 +39,12 @@ const getSafeId = (str) => {
     return Array.from(str).map(c => c.charCodeAt(0).toString(16).padStart(4, '0')).join('');
 };
 
-const showMsg = (txt) => {
+const showMsg = (txt, isError = false) => {
     const t = document.createElement('div');
-    t.className = "fixed top-8 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-8 py-4 rounded-xl z-[200] font-bold shadow-2xl transition-all text-center border-2 border-white/20";
+    t.className = `fixed top-8 left-1/2 -translate-x-1/2 ${isError ? 'bg-red-600' : 'bg-blue-600'} text-white px-8 py-4 rounded-xl z-[200] font-bold shadow-2xl transition-all text-center border-2 border-white/20`;
     t.innerText = txt;
     document.body.appendChild(t);
-    setTimeout(() => { if(t && t.parentNode) t.parentNode.removeChild(t); }, 3000);
+    setTimeout(() => { if(t && t.parentNode) t.parentNode.removeChild(t); }, 4000);
 };
 
 const showSection = (id) => {
@@ -58,7 +57,7 @@ const showSection = (id) => {
     if (target) target.classList.remove('hidden-section');
 };
 
-// --- פונקציות ממשק (חשופות ל-window עבור onclick ב-HTML) ---
+// --- פונקציות ממשק ---
 
 window.togglePass = (id) => {
     const el = document.getElementById(id);
@@ -112,14 +111,14 @@ window.checkTeacherGate = () => {
         document.getElementById('teacherGate').classList.add('hidden');
         document.getElementById('teacherAuthFields').classList.remove('hidden');
     } else {
-        showMsg("סיסמה שגויה");
+        showMsg("סיסמת גישה שגויה", true);
     }
 };
 
 // --- לוגיקת מורה ---
 
 window.loginTeacher = async () => {
-    if (!isAuthReady) return showMsg("מתחבר לשרת...");
+    if (!isAuthReady) return showMsg("המערכת עדיין מנסה להתחבר ל-Firebase... וודא שאימות אנונימי מופעל.", true);
     
     const userNm = document.getElementById('teacherUser').value.trim();
     const pass = document.getElementById('teacherPass').value;
@@ -132,13 +131,13 @@ window.loginTeacher = async () => {
         const snap = await getDoc(teacherRef);
         
         if (teacherMode === 'login') {
-            if (!snap.exists()) return showMsg("משתמש לא קיים. עבור ללשונית רישום.");
-            if (snap.data().password !== pass) return showMsg("סיסמה אישית שגויה");
+            if (!snap.exists()) return showMsg("משתמש לא קיים. עבור ללשונית רישום.", true);
+            if (snap.data().password !== pass) return showMsg("סיסמה אישית שגויה", true);
         } else {
-            if (snap.exists()) return showMsg("שם משתמש תפוס. בחר שם אחר.");
+            if (snap.exists()) return showMsg("שם משתמש תפוס. בחר שם אחר.", true);
             const school = document.getElementById('schoolName').value.trim();
             const head = document.getElementById('deptHead').value.trim();
-            if (!school || !head) return showMsg("כל השדות הם חובה ברישום");
+            if (!school || !head) return showMsg("כל השדות הם חובה ברישום", true);
             
             await setDoc(teacherRef, { username: userNm, password: pass, schoolName: school, departmentHead: head });
         }
@@ -152,8 +151,8 @@ window.loginTeacher = async () => {
         window.loadTeacherRoster();
         showSection('teacherDashboard');
     } catch (e) {
-        console.error("Login Error:", e);
-        showMsg("שגיאת תקשורת עם השרת.");
+        console.error("Firebase Error:", e);
+        showMsg("שגיאת Firestore: " + (e.code || "בדוק את חוקי ה-Rules ב-Console"), true);
     }
 };
 
@@ -183,7 +182,10 @@ window.loadTeacherRoster = async () => {
             }
         });
         document.getElementById('rosterCount').innerText = count;
-    } catch (e) { table.innerHTML = '<tr><td colspan="3" class="text-center text-red-400">שגיאת טעינה</td></tr>'; }
+    } catch (e) { 
+        console.error("Load Roster Error:", e);
+        table.innerHTML = '<tr><td colspan="3" class="text-center text-red-400">שגיאת הרשאות בקריאה (Check Rules)</td></tr>'; 
+    }
 };
 
 window.saveRoster = async () => {
@@ -198,7 +200,10 @@ window.saveRoster = async () => {
         }
         showMsg("רשימת התלמידים עודכנה");
         window.loadTeacherRoster();
-    } catch (e) { showMsg("שגיאת כתיבה לשרת."); }
+    } catch (e) { 
+        console.error("Save Roster Error:", e);
+        showMsg("שגיאת הרשאות בכתיבה (Check Rules)", true); 
+    }
 };
 
 window.viewStudentWork = async (tz) => {
@@ -212,12 +217,16 @@ window.viewStudentWork = async (tz) => {
     for(let i=0; i<3; i++) {
         const el = document.getElementById(targets[i]);
         el.innerText = "טוען נתונים...";
-        const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${tz}_${keys[i]}`));
-        el.innerText = snap.exists() ? snap.data().content : "(טרם הוזן)";
+        try {
+            const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${tz}_${keys[i]}`));
+            el.innerText = snap.exists() ? snap.data().content : "(טרם הוזן)";
+        } catch(e) { el.innerText = "(שגיאת הרשאה)"; }
     }
     
-    const feedSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', tz));
-    document.getElementById('teacherFeedbackInput').value = feedSnap.exists() ? feedSnap.data().text : "";
+    try {
+        const feedSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', tz));
+        document.getElementById('teacherFeedbackInput').value = feedSnap.exists() ? feedSnap.data().text : "";
+    } catch(e) { }
 };
 
 window.saveFeedback = async () => {
@@ -230,13 +239,13 @@ window.saveFeedback = async () => {
             s.style.opacity = '1';
             setTimeout(() => { if(s) s.style.opacity = '0'; }, 2000);
         }
-    } catch (e) { showMsg("שגיאה בשמירת משוב"); }
+    } catch (e) { showMsg("שגיאת הרשאה בשמירת משוב", true); }
 };
 
 // --- לוגיקת תלמיד ---
 
 window.loginStudent = async () => {
-    if (!isAuthReady) return showMsg("מתחבר לשרת...");
+    if (!isAuthReady) return showMsg("מתחבר לשרת...", true);
     const tz = document.getElementById('studentTZ').value.trim();
     if (!tz) return showMsg("נא להזין תעודת זהות");
     
@@ -249,20 +258,22 @@ window.loginStudent = async () => {
             window.loadStudentFeedback();
             window.closeLoginModals();
             showSection('studentWorkspace');
-        } else { showMsg("תעודת זהות אינה רשומה"); }
-    } catch (e) { showMsg("שגיאת אימות."); }
+        } else { showMsg("תעודת זהות אינה רשומה", true); }
+    } catch (e) { showMsg("שגיאת תקשורת: וודא שהשרת פעיל", true); }
 };
 
 window.loadStudentFeedback = async () => {
     if (!activeTZ) return;
-    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', activeTZ));
-    const box = document.getElementById('studentFeedbackBox');
-    if (snap.exists() && snap.data().text) {
-        box.classList.remove('hidden');
-        document.getElementById('feedbackText').innerText = snap.data().text;
-    } else {
-        if(box) box.classList.add('hidden');
-    }
+    try {
+        const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', activeTZ));
+        const box = document.getElementById('studentFeedbackBox');
+        if (snap.exists() && snap.data().text) {
+            box.classList.remove('hidden');
+            document.getElementById('feedbackText').innerText = snap.data().text;
+        } else {
+            if(box) box.classList.add('hidden');
+        }
+    } catch(e) { }
 };
 
 window.openProjectModal = async (key, title) => {
@@ -273,8 +284,10 @@ window.openProjectModal = async (key, title) => {
     const input = document.getElementById('workInput');
     input.value = "טוען עבודה שמורה...";
     
-    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${activeTZ}_${key}`));
-    input.value = snap.exists() ? snap.data().content : "";
+    try {
+        const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${activeTZ}_${key}`));
+        input.value = snap.exists() ? snap.data().content : "";
+    } catch (e) { input.value = ""; }
 };
 
 window.saveWork = async () => {
@@ -289,7 +302,7 @@ window.saveWork = async () => {
             s.style.opacity = '1';
             setTimeout(() => { if(s) s.style.opacity = '0'; }, 2000);
         }
-    } catch (e) { showMsg("שגיאה בשמירה"); }
+    } catch (e) { showMsg("שגיאה בשמירה", true); }
 };
 
 window.closeModal = () => document.getElementById('modalOverlay').classList.add('hidden');
@@ -300,10 +313,14 @@ window.closeViewModal = () => document.getElementById('teacherViewModal').classL
 onAuthStateChanged(auth, (user) => {
     currentUser = user;
     isAuthReady = true;
+    console.log("Auth Status: System Ready.");
 });
 
 (async () => {
     try {
         await signInAnonymously(auth);
-    } catch(e) { console.error("Firebase Auth initialization failed", e); }
+    } catch(e) { 
+        console.error("Auth Error:", e);
+        showMsg("שגיאת אימות: וודא ש-'Anonymous' מופעל ב-Firebase Console.", true);
+    }
 })();
