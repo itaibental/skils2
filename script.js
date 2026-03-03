@@ -1,25 +1,24 @@
 /**
  * Skills Practice - Project Logic
- * מיועד לעבודה עם index.html ו-style.css.
- * כולל תיקוני אתחול לחיבור יציב לשרת Firebase.
+ * Updated: Support for Login/Signup separation and Password Toggle.
  */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-// --- גלובליים וסטייט ---
+// --- System Variables ---
 let auth, db;
 let currentUser = null;
 let isAuthReady = false;
 let activeTZ = null;
 let activeTeacherId = null;
 let inspectingStudentTZ = null;
+let teacherMode = 'login'; // 'login' or 'signup'
 
-// שליפת מזהה אפליקציה מהסביבה
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'skills-practice-v2';
 
-// --- פונקציות עזר ---
+// --- Utility Functions ---
 
 const getSafeId = (str) => {
     if (!str) return "";
@@ -44,7 +43,36 @@ const showSection = (id) => {
     if (target) target.classList.remove('hidden-section');
 };
 
-// --- פונקציות ממשק (מוצמדות ל-window) ---
+// --- Global UI Functions (window) ---
+
+window.togglePass = (id) => {
+    const el = document.getElementById(id);
+    if (el) el.type = el.type === 'password' ? 'text' : 'password';
+};
+
+window.switchTeacherMode = (mode) => {
+    teacherMode = mode;
+    const tabLogin = document.getElementById('tabLogin');
+    const tabSignup = document.getElementById('tabSignup');
+    const newFields = document.getElementById('newTeacherFields');
+    const mainBtn = document.getElementById('mainTeacherBtn');
+
+    if (mode === 'login') {
+        tabLogin.classList.replace('text-gray-500', 'text-white');
+        tabLogin.classList.replace('border-transparent', 'border-blue-500');
+        tabSignup.classList.replace('text-white', 'text-gray-500');
+        tabSignup.classList.replace('border-blue-500', 'border-transparent');
+        newFields.classList.add('hidden');
+        mainBtn.innerText = "כניסה למערכת";
+    } else {
+        tabSignup.classList.replace('text-gray-500', 'text-white');
+        tabSignup.classList.replace('border-transparent', 'border-blue-500');
+        tabLogin.classList.replace('text-white', 'text-gray-500');
+        tabLogin.classList.replace('border-blue-500', 'border-transparent');
+        newFields.classList.remove('hidden');
+        mainBtn.innerText = "צור משתמש והתחבר";
+    }
+};
 
 window.openLoginModal = (type) => {
     window.closeLoginModals();
@@ -57,6 +85,7 @@ window.openLoginModal = (type) => {
             modal.classList.remove('hidden');
             document.getElementById('teacherGate').classList.remove('hidden');
             document.getElementById('teacherAuthFields').classList.add('hidden');
+            window.switchTeacherMode('login'); // Reset to login tab
         }
     }
 };
@@ -73,28 +102,15 @@ window.checkTeacherGate = () => {
     if (passInput && passInput.value === "1234") {
         document.getElementById('teacherGate').classList.add('hidden');
         document.getElementById('teacherAuthFields').classList.remove('hidden');
-        
-        const userField = document.getElementById('teacherUser');
-        if(userField) {
-            userField.onblur = async (e) => {
-                const tid = getSafeId(e.target.value);
-                if (!tid || !db) return;
-                try {
-                    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'teacher_profiles', tid));
-                    const newFields = document.getElementById('newTeacherFields');
-                    if(newFields) newFields.classList.toggle('hidden', snap.exists());
-                } catch(err) { console.error("Profile check error", err); }
-            };
-        }
     } else {
         showMsg("סיסמה שגויה");
     }
 };
 
-// --- לוגיקת מורה ---
+// --- Teacher Logic ---
 
 window.loginTeacher = async () => {
-    if (!isAuthReady || !db) return showMsg("המערכת מתחברת לשרת, נסה שנית בעוד מספר שניות...");
+    if (!isAuthReady || !db) return showMsg("מתחבר לשרת...");
     
     const userNm = document.getElementById('teacherUser').value.trim();
     const pass = document.getElementById('teacherPass').value;
@@ -105,25 +121,32 @@ window.loginTeacher = async () => {
     
     try {
         const snap = await getDoc(teacherRef);
-        if (snap.exists()) {
+        
+        if (teacherMode === 'login') {
+            if (!snap.exists()) return showMsg("משתמש לא קיים. עבור ללשונית רישום.");
             if (snap.data().password !== pass) return showMsg("סיסמה אישית שגויה");
         } else {
+            // Sign up mode
+            if (snap.exists()) return showMsg("שם משתמש תפוס. בחר שם אחר.");
             const school = document.getElementById('schoolName').value.trim();
             const head = document.getElementById('deptHead').value.trim();
-            if (!school || !head) return showMsg("שם בית ספר ורכז הם שדות חובה למורה חדש");
+            if (!school || !head) return showMsg("כל השדות הם חובה ברישום משתמש חדש");
+            
             await setDoc(teacherRef, { username: userNm, password: pass, schoolName: school, departmentHead: head });
         }
         
         const finalSnap = await getDoc(teacherRef);
         const finalData = finalSnap.data();
         activeTeacherId = teacherId;
-        document.getElementById('teacherProfileInfo').innerText = `${finalData.schoolName} | רכז: ${finalData.departmentHead}`;
+        const profileInfo = document.getElementById('teacherProfileInfo');
+        if(profileInfo) profileInfo.innerText = `${finalData.schoolName} | רכז: ${finalData.departmentHead}`;
+        
         window.closeLoginModals();
         window.loadTeacherRoster();
         showSection('teacherDashboard');
     } catch (e) {
-        console.error("Teacher Login Error:", e);
-        showMsg("שגיאת הרשאות או חיבור.");
+        console.error("Login Error:", e);
+        showMsg("שגיאת תקשורת עם השרת.");
     }
 };
 
@@ -131,7 +154,7 @@ window.loadTeacherRoster = async () => {
     if (!activeTeacherId || !db) return;
     const table = document.getElementById('rosterTableBody');
     if (!table) return;
-    table.innerHTML = '<tr><td colspan="3" class="text-center p-4">טוען נתונים...</td></tr>';
+    table.innerHTML = '<tr><td colspan="3" class="text-center p-4 italic text-white/50 font-bold">טוען נתונים...</td></tr>';
     
     try {
         const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'access_list'));
@@ -142,21 +165,21 @@ window.loadTeacherRoster = async () => {
             if (data.teacherId === activeTeacherId) {
                 count++;
                 const tr = document.createElement('tr');
-                tr.className = "border-b border-slate-800 hover:bg-slate-800/30 transition text-right";
+                tr.className = "border-b border-slate-800 hover:bg-white/5 transition text-right";
                 tr.innerHTML = `
-                    <td class="p-3 font-mono text-blue-300">${data.tz}</td>
-                    <td class="p-3 text-gray-400 text-right">${data.className}</td>
+                    <td class="p-3 font-mono text-blue-300 text-right">${data.tz}</td>
+                    <td class="p-3 text-gray-400 text-right font-bold">${data.className}</td>
                     <td class="p-3 text-center">
-                        <button onclick="window.viewStudentWork('${data.tz}')" class="text-blue-500 hover:underline text-xs font-bold">צפייה ומשוב 👁️</button>
+                        <button onclick="window.viewStudentWork('${data.tz}')" class="text-blue-500 hover:underline text-xs font-black">צפייה ומשוב 👁️</button>
                     </td>
                 `;
                 table.appendChild(tr);
             }
         });
-        document.getElementById('rosterCount').innerText = count;
+        const rosterCountEl = document.getElementById('rosterCount');
+        if(rosterCountEl) rosterCountEl.innerText = count;
     } catch (e) { 
-        console.error("Load Roster Error:", e);
-        table.innerHTML = '<tr><td colspan="3" class="text-center text-red-400">שגיאת טעינה</td></tr>'; 
+        table.innerHTML = '<tr><td colspan="3" class="text-center text-red-400 font-bold">שגיאה בטעינה.</td></tr>'; 
     }
 };
 
@@ -170,32 +193,37 @@ window.saveRoster = async () => {
         for (const tz of ids) {
             await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'access_list', tz), { tz, className, teacherId: activeTeacherId });
         }
-        showMsg("רשימה עודכנה בהצלחה");
+        showMsg("רשימת התלמידים עודכנה");
         window.loadTeacherRoster();
-    } catch (e) { showMsg("שגיאה בשמירה: חסרה הרשאה"); }
+    } catch (e) { showMsg("שגיאת כתיבה לשרת."); }
 };
 
 window.viewStudentWork = async (tz) => {
     inspectingStudentTZ = tz;
-    document.getElementById('viewStudentTitle').innerText = `צפייה בתוצרי תלמיד: ${tz}`;
-    document.getElementById('teacherViewModal').classList.remove('hidden');
+    const titleEl = document.getElementById('viewStudentTitle');
+    if(titleEl) titleEl.innerText = `צפייה בתוצרי תלמיד: ${tz}`;
+    const modal = document.getElementById('teacherViewModal');
+    if(modal) modal.classList.remove('hidden');
     
     const keys = ['crew', 'location', 'questions'];
     const targets = ['viewCrew', 'viewLoc', 'viewQue'];
     
     for(let i=0; i<3; i++) {
         const el = document.getElementById(targets[i]);
-        el.innerText = "טוען...";
-        try {
-            const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${tz}_${keys[i]}`));
-            el.innerText = snap.exists() ? snap.data().content : "(טרם הוזן)";
-        } catch(e) { el.innerText = "(שגיאת טעינה)"; }
+        if(el) {
+            el.innerText = "טוען נתונים...";
+            try {
+                const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${tz}_${keys[i]}`));
+                el.innerText = snap.exists() ? snap.data().content : "(טרם הוזן)";
+            } catch(e) { el.innerText = "(שגיאה)"; }
+        }
     }
     
     try {
         const feedSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', tz));
-        document.getElementById('teacherFeedbackInput').value = feedSnap.exists() ? feedSnap.data().text : "";
-    } catch(e) { /* אין משוב קודם */ }
+        const feedInput = document.getElementById('teacherFeedbackInput');
+        if(feedInput) feedInput.value = feedSnap.exists() ? feedSnap.data().text : "";
+    } catch(e) { }
 };
 
 window.saveFeedback = async () => {
@@ -211,7 +239,7 @@ window.saveFeedback = async () => {
     } catch (e) { showMsg("שגיאה בשמירת משוב"); }
 };
 
-// --- לוגיקת תלמיד ---
+// --- Student Logic ---
 
 window.loginStudent = async () => {
     if (!isAuthReady || !db) return showMsg("מתחבר לשרת...");
@@ -229,8 +257,8 @@ window.loginStudent = async () => {
             window.loadStudentFeedback();
             window.closeLoginModals();
             showSection('studentWorkspace');
-        } else { showMsg("תעודת זהות אינה רשומה במערכת המורה"); }
-    } catch (e) { showMsg("שגיאת אימות"); }
+        } else { showMsg("תעודת זהות אינה רשומה"); }
+    } catch (e) { showMsg("שגיאת אימות."); }
 };
 
 window.loadStudentFeedback = async () => {
@@ -240,25 +268,29 @@ window.loadStudentFeedback = async () => {
         const box = document.getElementById('studentFeedbackBox');
         if (snap.exists() && snap.data().text) {
             if(box) box.classList.remove('hidden');
-            document.getElementById('feedbackText').innerText = snap.data().text;
+            const txtEl = document.getElementById('feedbackText');
+            if(txtEl) txtEl.innerText = snap.data().text;
         } else {
             if(box) box.classList.add('hidden');
         }
-    } catch(e) { console.error("Feedback load error", e); }
+    } catch(e) { }
 };
 
 window.openProjectModal = async (key, title) => {
     if (!activeTZ || !db) return;
     window.activeTaskKey = key;
-    document.getElementById('modalTitle').innerText = title;
-    document.getElementById('modalOverlay').classList.remove('hidden');
+    const titleEl = document.getElementById('modalTitle');
+    if(titleEl) titleEl.innerText = title;
+    const overlay = document.getElementById('modalOverlay');
+    if(overlay) overlay.classList.remove('hidden');
     const input = document.getElementById('workInput');
-    input.value = "טוען עבודה שמורה...";
-    
-    try {
-        const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${activeTZ}_${key}`));
-        input.value = snap.exists() ? snap.data().content : "";
-    } catch (e) { input.value = ""; }
+    if(input) {
+        input.value = "טוען עבודה שמורה...";
+        try {
+            const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${activeTZ}_${key}`));
+            input.value = snap.exists() ? snap.data().content : "";
+        } catch (e) { input.value = ""; }
+    }
 };
 
 window.saveWork = async () => {
@@ -286,41 +318,31 @@ window.closeViewModal = () => {
     if(modal) modal.classList.add('hidden');
 };
 
-// --- אתחול מערכת (Initialization) ---
+// --- Initialization ---
 
 const initializeAppSequence = async () => {
     try {
-        // בדיקת משתני קונפיגורציה
-        if (typeof __firebase_config === 'undefined') {
-            console.error("Firebase config is missing!");
-            showMsg("שגיאת קונפיגורציה: חסר מידע לחיבור לענן.");
-            return;
-        }
+        if (typeof __firebase_config === 'undefined') return;
 
         const firebaseConfig = JSON.parse(__firebase_config);
         const firebaseApp = initializeApp(firebaseConfig);
         auth = getAuth(firebaseApp);
         db = getFirestore(firebaseApp);
 
-        // הגדרת מאזין למצב אימות - חייב לקרות מיד
         onAuthStateChanged(auth, (user) => {
             currentUser = user;
             isAuthReady = true;
-            console.log("Auth System Ready. User:", user ? user.uid : "Anonymous");
         });
 
-        // ביצוע כניסה ראשונית
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
         } else {
             await signInAnonymously(auth);
         }
+        
+        if (auth.currentUser) isAuthReady = true;
 
-    } catch(e) { 
-        console.error("Critical Firebase Initialization Error:", e);
-        showMsg("שגיאה בחיבור לשרת. בדוק את חיבור האינטרנט או הגדרות ה-Firebase.");
-    }
+    } catch(e) { console.error("Initialization Failed:", e); }
 };
 
-// הפעלת האתחול
 initializeAppSequence();
