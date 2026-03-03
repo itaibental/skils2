@@ -1,27 +1,24 @@
 /**
  * Skills Practice - Project Logic
- * Updated: Teacher profile fields, Roster view, and Student feedback
+ * מיועד לעבודה עם index.html ו-style.css כפרויקט מפוצל ל-GitHub.
  */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-// Firebase Configuration (provided via environment)
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'skills-practice-v2';
-
-// Local State
+// --- גלובליים וסטייט ---
+let auth, db;
 let currentUser = null;
 let isAuthReady = false;
 let activeTZ = null;
 let activeTeacherId = null;
 let inspectingStudentTZ = null;
 
-// --- Helper Functions ---
+// שליפת מזהה אפליקציה (ברירת מחדל לשימוש מקומי)
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'skills-practice-v2';
+
+// --- פונקציות עזר ---
 
 const getSafeId = (str) => {
     if (!str) return "";
@@ -30,14 +27,15 @@ const getSafeId = (str) => {
 
 const showMsg = (txt) => {
     const t = document.createElement('div');
-    t.className = "fixed top-8 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-8 py-4 rounded-xl z-[200] font-bold shadow-2xl transition-all";
+    t.className = "fixed top-8 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-8 py-4 rounded-xl z-[200] font-bold shadow-2xl transition-all text-center border-2 border-white/20";
     t.innerText = txt;
     document.body.appendChild(t);
     setTimeout(() => { if(t && t.parentNode) t.parentNode.removeChild(t); }, 3000);
 };
 
 const showSection = (id) => {
-    ['landingScreen', 'studentWorkspace', 'teacherDashboard'].forEach(s => {
+    const sections = ['landingScreen', 'studentWorkspace', 'teacherDashboard'];
+    sections.forEach(s => {
         const el = document.getElementById(s);
         if (el) el.classList.add('hidden-section');
     });
@@ -45,47 +43,62 @@ const showSection = (id) => {
     if (target) target.classList.remove('hidden-section');
 };
 
-// --- Exposed Functions for HTML Click Handlers ---
+// --- פונקציות ממשק (מוצמדות ל-window כדי שיעבדו עם onclick ב-HTML) ---
 
 window.openLoginModal = (type) => {
     window.closeLoginModals();
     if (type === 'student') {
-        document.getElementById('studentLoginModal').classList.remove('hidden');
+        const modal = document.getElementById('studentLoginModal');
+        if(modal) modal.classList.remove('hidden');
     } else {
-        document.getElementById('teacherGate').classList.remove('hidden');
-        document.getElementById('teacherAuthFields').classList.add('hidden');
-        document.getElementById('teacherLoginModal').classList.remove('hidden');
+        const modal = document.getElementById('teacherLoginModal');
+        if(modal) {
+            modal.classList.remove('hidden');
+            document.getElementById('teacherGate').classList.remove('hidden');
+            document.getElementById('teacherAuthFields').classList.add('hidden');
+        }
     }
 };
 
 window.closeLoginModals = () => {
-    document.getElementById('studentLoginModal').classList.add('hidden');
-    document.getElementById('teacherLoginModal').classList.add('hidden');
+    const sModal = document.getElementById('studentLoginModal');
+    const tModal = document.getElementById('teacherLoginModal');
+    if(sModal) sModal.classList.add('hidden');
+    if(tModal) tModal.classList.add('hidden');
 };
 
 window.checkTeacherGate = () => {
-    const val = document.getElementById('globalTeacherPass').value;
-    if (val === "1234") {
+    const passInput = document.getElementById('globalTeacherPass');
+    if (passInput && passInput.value === "1234") {
         document.getElementById('teacherGate').classList.add('hidden');
         document.getElementById('teacherAuthFields').classList.remove('hidden');
         
-        // Auto-check for existing profiles on blur
-        document.getElementById('teacherUser').onblur = async (e) => {
-            const tid = getSafeId(e.target.value);
-            if (!tid) return;
-            const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'teacher_profiles', tid));
-            document.getElementById('newTeacherFields').classList.toggle('hidden', snap.exists());
-        };
+        // הגדרת בדיקת פרופיל אוטומטית בעת עזיבת שדה שם המשתמש
+        const userField = document.getElementById('teacherUser');
+        if(userField) {
+            userField.onblur = async (e) => {
+                const tid = getSafeId(e.target.value);
+                if (!tid || !db) return;
+                try {
+                    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'teacher_profiles', tid));
+                    const newFields = document.getElementById('newTeacherFields');
+                    if(newFields) newFields.classList.toggle('hidden', snap.exists());
+                } catch(err) { console.error("Profile check error", err); }
+            };
+        }
     } else {
         showMsg("סיסמה שגויה");
     }
 };
 
+// --- לוגיקת מורה ---
+
 window.loginTeacher = async () => {
-    if (!isAuthReady) return showMsg("מתחבר...");
+    if (!isAuthReady || !db) return showMsg("המערכת עדיין מתחברת לשרת, נסה שנית בעוד רגע...");
+    
     const userNm = document.getElementById('teacherUser').value.trim();
     const pass = document.getElementById('teacherPass').value;
-    if (!userNm || !pass) return showMsg("חסרים פרטים");
+    if (!userNm || !pass) return showMsg("נא להזין שם משתמש וסיסמה");
 
     const teacherId = getSafeId(userNm);
     const teacherRef = doc(db, 'artifacts', appId, 'public', 'data', 'teacher_profiles', teacherId);
@@ -97,7 +110,7 @@ window.loginTeacher = async () => {
         } else {
             const school = document.getElementById('schoolName').value.trim();
             const head = document.getElementById('deptHead').value.trim();
-            if (!school || !head) return showMsg("שם בית ספר ורכז הם שדות חובה");
+            if (!school || !head) return showMsg("שם בית ספר ורכז הם שדות חובה למורה חדש");
             await setDoc(teacherRef, { username: userNm, password: pass, schoolName: school, departmentHead: head });
         }
         
@@ -107,17 +120,20 @@ window.loginTeacher = async () => {
         window.closeLoginModals();
         window.loadTeacherRoster();
         showSection('teacherDashboard');
-    } catch (e) { showMsg("שגיאת הרשאות."); }
+    } catch (e) {
+        console.error(e);
+        showMsg("שגיאת הרשאות או חיבור.");
+    }
 };
 
 window.loadTeacherRoster = async () => {
-    if (!activeTeacherId) return;
+    if (!activeTeacherId || !db) return;
     const table = document.getElementById('rosterTableBody');
+    if (!table) return;
     table.innerHTML = '<tr><td colspan="3" class="text-center p-4">טוען נתונים...</td></tr>';
     
     try {
-        const coll = collection(db, 'artifacts', appId, 'public', 'data', 'access_list');
-        const snap = await getDocs(coll);
+        const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'access_list'));
         table.innerHTML = '';
         let count = 0;
         snap.forEach((d) => {
@@ -137,11 +153,14 @@ window.loadTeacherRoster = async () => {
             }
         });
         document.getElementById('rosterCount').innerText = count;
-    } catch (e) { table.innerHTML = '<tr><td colspan="3">שגיאת טעינה</td></tr>'; }
+    } catch (e) { 
+        console.error(e);
+        table.innerHTML = '<tr><td colspan="3" class="text-center text-red-400">שגיאת טעינה - וודא שחוקי ה-Firestore מוגדרים נכון</td></tr>'; 
+    }
 };
 
 window.saveRoster = async () => {
-    if (!activeTeacherId) return;
+    if (!activeTeacherId || !db) return;
     const className = document.getElementById('newClass').value || 'כללי';
     const rawIds = document.getElementById('studentIdsList').value;
     const ids = rawIds.split('\n').map(s => s.trim()).filter(Boolean);
@@ -152,7 +171,7 @@ window.saveRoster = async () => {
         }
         showMsg("הרשימה עודכנה בהצלחה");
         window.loadTeacherRoster();
-    } catch (e) { showMsg("שגיאה בשמירה"); }
+    } catch (e) { showMsg("שגיאה בשמירה: וודא שיש לך הרשאות כתיבה"); }
 };
 
 window.viewStudentWork = async (tz) => {
@@ -166,96 +185,139 @@ window.viewStudentWork = async (tz) => {
     for(let i=0; i<3; i++) {
         const el = document.getElementById(targets[i]);
         el.innerText = "טוען...";
-        const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${tz}_${keys[i]}`));
-        el.innerText = snap.exists() ? snap.data().content : "(טרם הוזן)";
+        try {
+            const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${tz}_${keys[i]}`));
+            el.innerText = snap.exists() ? snap.data().content : "(טרם הוזן)";
+        } catch(e) { el.innerText = "(שגיאת טעינה)"; }
     }
     
-    const feedSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', tz));
-    document.getElementById('teacherFeedbackInput').value = feedSnap.exists() ? feedSnap.data().text : "";
+    try {
+        const feedSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', tz));
+        document.getElementById('teacherFeedbackInput').value = feedSnap.exists() ? feedSnap.data().text : "";
+    } catch(e) { /* אין משוב קודם */ }
 };
 
 window.saveFeedback = async () => {
-    if (!inspectingStudentTZ) return;
+    if (!inspectingStudentTZ || !db) return;
     const text = document.getElementById('teacherFeedbackInput').value;
     try {
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', inspectingStudentTZ), { text });
         const s = document.getElementById('feedbackSaveStatus');
-        s.style.opacity = '1';
-        setTimeout(() => { if(s) s.style.opacity = '0'; }, 2000);
+        if(s) {
+            s.style.opacity = '1';
+            setTimeout(() => { if(s) s.style.opacity = '0'; }, 2000);
+        }
     } catch (e) { showMsg("שגיאה בשמירת משוב"); }
 };
 
+// --- לוגיקת תלמיד ---
+
 window.loginStudent = async () => {
-    if (!isAuthReady) return showMsg("מתחבר...");
-    const tz = document.getElementById('studentTZ').value.trim();
+    if (!isAuthReady || !db) return showMsg("מתחבר לשרת...");
+    const tzField = document.getElementById('studentTZ');
+    const tz = tzField ? tzField.value.trim() : "";
     if (!tz) return showMsg("נא להזין תעודת זהות");
     
     try {
         const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'access_list', tz));
         if (snap.exists()) {
             activeTZ = tz;
-            document.getElementById('welcomeStudent').innerText = `שלום, ${tz} (${snap.data().className})`;
+            const data = snap.data();
+            const welcome = document.getElementById('welcomeStudent');
+            if(welcome) welcome.innerText = `שלום, ${tz} (${data.className})`;
             window.loadStudentFeedback();
             window.closeLoginModals();
             showSection('studentWorkspace');
-        } else { showMsg("ת\"ז לא רשומה"); }
-    } catch (e) { showMsg("שגיאת אימות"); }
+        } else { showMsg("תעודת זהות אינה רשומה במערכת המורה"); }
+    } catch (e) { showMsg("שגיאת אימות מול מסד הנתונים"); }
 };
 
 window.loadStudentFeedback = async () => {
-    if (!activeTZ) return;
-    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', activeTZ));
-    const box = document.getElementById('studentFeedbackBox');
-    if (snap.exists() && snap.data().text) {
-        box.classList.remove('hidden');
-        document.getElementById('feedbackText').innerText = snap.data().text;
-    } else { box.classList.add('hidden'); }
+    if (!activeTZ || !db) return;
+    try {
+        const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', activeTZ));
+        const box = document.getElementById('studentFeedbackBox');
+        if (snap.exists() && snap.data().text) {
+            box.classList.remove('hidden');
+            document.getElementById('feedbackText').innerText = snap.data().text;
+        } else {
+            if(box) box.classList.add('hidden');
+        }
+    } catch(e) { console.error("Feedback load error", e); }
 };
 
 window.openProjectModal = async (key, title) => {
-    if (!activeTZ) return;
+    if (!activeTZ || !db) return;
     window.activeTaskKey = key;
     document.getElementById('modalTitle').innerText = title;
     document.getElementById('modalOverlay').classList.remove('hidden');
     const input = document.getElementById('workInput');
-    input.value = "טוען...";
+    input.value = "טוען עבודה שמורה...";
     
-    const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${activeTZ}_${key}`));
-    input.value = snap.exists() ? snap.data().content : "";
+    try {
+        const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${activeTZ}_${key}`));
+        input.value = snap.exists() ? snap.data().content : "";
+    } catch (e) { input.value = ""; }
 };
 
 window.saveWork = async () => {
-    if (!activeTZ || !window.activeTaskKey) return;
+    if (!activeTZ || !window.activeTaskKey || !db) return;
     const content = document.getElementById('workInput').value;
     try {
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_work', `${activeTZ}_${window.activeTaskKey}`), { 
             content, updatedAt: new Date().toISOString()
         });
         const s = document.getElementById('saveStatus');
-        s.style.opacity = '1';
-        setTimeout(() => { if(s) s.style.opacity = '0'; }, 2000);
+        if(s) {
+            s.style.opacity = '1';
+            setTimeout(() => { if(s) s.style.opacity = '0'; }, 2000);
+        }
     } catch (e) { showMsg("שגיאה בשמירה"); }
 };
 
-window.closeModal = () => document.getElementById('modalOverlay').classList.add('hidden');
-window.closeViewModal = () => document.getElementById('teacherViewModal').classList.add('hidden');
+window.closeModal = () => {
+    const modal = document.getElementById('modalOverlay');
+    if(modal) modal.classList.add('hidden');
+};
 
-// --- Initialization ---
+window.closeViewModal = () => {
+    const modal = document.getElementById('teacherViewModal');
+    if(modal) modal.classList.add('hidden');
+};
 
-const initAuth = async () => {
+// --- אתחול מערכת ---
+
+const initializeAppSequence = async () => {
     try {
+        // בדיקת תקינות משתנה הקונפיגורציה מהסביבה
+        if (typeof __firebase_config === 'undefined') {
+            console.error("Firebase config missing from environment!");
+            return;
+        }
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const firebaseApp = initializeApp(firebaseConfig);
+        auth = getAuth(firebaseApp);
+        db = getFirestore(firebaseApp);
+
+        // תהליך התחברות
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
         } else {
             await signInAnonymously(auth);
         }
-    } catch(e) { console.error("Firebase auth failed", e); }
+    } catch(e) { 
+        console.error("Firebase initialization failed", e);
+        showMsg("שגיאה באתחול שירותי הענן. וודא הגדרות Firebase.");
+    }
 };
 
-onAuthStateChanged(auth, (u) => {
+// האזנה לשינויי מצב אימות
+onAuthStateChanged(getAuth(), (u) => {
     currentUser = u;
     isAuthReady = true;
+    console.log("Auth state changed: User is", u ? "Logged in" : "Logged out");
 });
 
-// Run Init
-initAuth();
+// הרצת האתחול
+initializeAppSequence();
