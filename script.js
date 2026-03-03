@@ -1,6 +1,7 @@
 /**
  * Skills Practice - Project Logic
- * מיועד לעבודה עם index.html ו-style.css כפרויקט מפוצל ל-GitHub.
+ * מיועד לעבודה עם index.html ו-style.css.
+ * כולל תיקוני אתחול לחיבור יציב לשרת Firebase.
  */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -15,7 +16,7 @@ let activeTZ = null;
 let activeTeacherId = null;
 let inspectingStudentTZ = null;
 
-// שליפת מזהה אפליקציה (ברירת מחדל לשימוש מקומי)
+// שליפת מזהה אפליקציה מהסביבה
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'skills-practice-v2';
 
 // --- פונקציות עזר ---
@@ -43,7 +44,7 @@ const showSection = (id) => {
     if (target) target.classList.remove('hidden-section');
 };
 
-// --- פונקציות ממשק (מוצמדות ל-window כדי שיעבדו עם onclick ב-HTML) ---
+// --- פונקציות ממשק (מוצמדות ל-window) ---
 
 window.openLoginModal = (type) => {
     window.closeLoginModals();
@@ -73,7 +74,6 @@ window.checkTeacherGate = () => {
         document.getElementById('teacherGate').classList.add('hidden');
         document.getElementById('teacherAuthFields').classList.remove('hidden');
         
-        // הגדרת בדיקת פרופיל אוטומטית בעת עזיבת שדה שם המשתמש
         const userField = document.getElementById('teacherUser');
         if(userField) {
             userField.onblur = async (e) => {
@@ -94,7 +94,7 @@ window.checkTeacherGate = () => {
 // --- לוגיקת מורה ---
 
 window.loginTeacher = async () => {
-    if (!isAuthReady || !db) return showMsg("המערכת עדיין מתחברת לשרת, נסה שנית בעוד רגע...");
+    if (!isAuthReady || !db) return showMsg("המערכת מתחברת לשרת, נסה שנית בעוד מספר שניות...");
     
     const userNm = document.getElementById('teacherUser').value.trim();
     const pass = document.getElementById('teacherPass').value;
@@ -114,14 +114,15 @@ window.loginTeacher = async () => {
             await setDoc(teacherRef, { username: userNm, password: pass, schoolName: school, departmentHead: head });
         }
         
-        const finalData = (await getDoc(teacherRef)).data();
+        const finalSnap = await getDoc(teacherRef);
+        const finalData = finalSnap.data();
         activeTeacherId = teacherId;
         document.getElementById('teacherProfileInfo').innerText = `${finalData.schoolName} | רכז: ${finalData.departmentHead}`;
         window.closeLoginModals();
         window.loadTeacherRoster();
         showSection('teacherDashboard');
     } catch (e) {
-        console.error(e);
+        console.error("Teacher Login Error:", e);
         showMsg("שגיאת הרשאות או חיבור.");
     }
 };
@@ -154,8 +155,8 @@ window.loadTeacherRoster = async () => {
         });
         document.getElementById('rosterCount').innerText = count;
     } catch (e) { 
-        console.error(e);
-        table.innerHTML = '<tr><td colspan="3" class="text-center text-red-400">שגיאת טעינה - וודא שחוקי ה-Firestore מוגדרים נכון</td></tr>'; 
+        console.error("Load Roster Error:", e);
+        table.innerHTML = '<tr><td colspan="3" class="text-center text-red-400">שגיאת טעינה</td></tr>'; 
     }
 };
 
@@ -169,9 +170,9 @@ window.saveRoster = async () => {
         for (const tz of ids) {
             await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'access_list', tz), { tz, className, teacherId: activeTeacherId });
         }
-        showMsg("הרשימה עודכנה בהצלחה");
+        showMsg("רשימה עודכנה בהצלחה");
         window.loadTeacherRoster();
-    } catch (e) { showMsg("שגיאה בשמירה: וודא שיש לך הרשאות כתיבה"); }
+    } catch (e) { showMsg("שגיאה בשמירה: חסרה הרשאה"); }
 };
 
 window.viewStudentWork = async (tz) => {
@@ -229,7 +230,7 @@ window.loginStudent = async () => {
             window.closeLoginModals();
             showSection('studentWorkspace');
         } else { showMsg("תעודת זהות אינה רשומה במערכת המורה"); }
-    } catch (e) { showMsg("שגיאת אימות מול מסד הנתונים"); }
+    } catch (e) { showMsg("שגיאת אימות"); }
 };
 
 window.loadStudentFeedback = async () => {
@@ -238,7 +239,7 @@ window.loadStudentFeedback = async () => {
         const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_feedback', activeTZ));
         const box = document.getElementById('studentFeedbackBox');
         if (snap.exists() && snap.data().text) {
-            box.classList.remove('hidden');
+            if(box) box.classList.remove('hidden');
             document.getElementById('feedbackText').innerText = snap.data().text;
         } else {
             if(box) box.classList.add('hidden');
@@ -285,13 +286,14 @@ window.closeViewModal = () => {
     if(modal) modal.classList.add('hidden');
 };
 
-// --- אתחול מערכת ---
+// --- אתחול מערכת (Initialization) ---
 
 const initializeAppSequence = async () => {
     try {
-        // בדיקת תקינות משתנה הקונפיגורציה מהסביבה
+        // בדיקת משתני קונפיגורציה
         if (typeof __firebase_config === 'undefined') {
-            console.error("Firebase config missing from environment!");
+            console.error("Firebase config is missing!");
+            showMsg("שגיאת קונפיגורציה: חסר מידע לחיבור לענן.");
             return;
         }
 
@@ -300,24 +302,25 @@ const initializeAppSequence = async () => {
         auth = getAuth(firebaseApp);
         db = getFirestore(firebaseApp);
 
-        // תהליך התחברות
+        // הגדרת מאזין למצב אימות - חייב לקרות מיד
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            isAuthReady = true;
+            console.log("Auth System Ready. User:", user ? user.uid : "Anonymous");
+        });
+
+        // ביצוע כניסה ראשונית
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
         } else {
             await signInAnonymously(auth);
         }
+
     } catch(e) { 
-        console.error("Firebase initialization failed", e);
-        showMsg("שגיאה באתחול שירותי הענן. וודא הגדרות Firebase.");
+        console.error("Critical Firebase Initialization Error:", e);
+        showMsg("שגיאה בחיבור לשרת. בדוק את חיבור האינטרנט או הגדרות ה-Firebase.");
     }
 };
 
-// האזנה לשינויי מצב אימות
-onAuthStateChanged(getAuth(), (u) => {
-    currentUser = u;
-    isAuthReady = true;
-    console.log("Auth state changed: User is", u ? "Logged in" : "Logged out");
-});
-
-// הרצת האתחול
+// הפעלת האתחול
 initializeAppSequence();
